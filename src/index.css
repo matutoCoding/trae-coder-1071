@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background-color: #F5F1E8;
+  color: #0F3D2E;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Noto Serif SC', 'Source Han Serif CN', SimSun, serif;
+  font-weight: 600;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #C8A96B transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: #C8A96B;
+    border-radius: 3px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* 表格斑马纹 */
+.table-zebra tbody tr:nth-child(odd) {
+  background-color: rgba(245, 241, 232, 0.5);
+}
+
+/* 按钮悬浮上浮效果 */
+.btn-elev {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.btn-elev:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(15, 61, 46, 0.18);
+}
+
+/* 输入框聚焦 */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #C8A96B;
+  box-shadow: 0 0 0 3px rgba(200, 169, 107, 0.2);
+}
+
+/* 金箔数字 */
+.gold-text {
+  background: linear-gradient(135deg, #C8A96B 0%, #EBDFB9 50%, #C8A96B 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
