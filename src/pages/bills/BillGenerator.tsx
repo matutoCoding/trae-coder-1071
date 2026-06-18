@@ -5,8 +5,8 @@ import { computeBillingSegments } from '@/utils/billingEngine';
 import { computeSplit, computeUtility, utilityDefaults } from '@/utils/splitCalculator';
 import SegmentBar from '@/components/SegmentBar';
 import DonutChart from '@/components/DonutChart';
-import { formatMoney, daysBetween } from '@/utils';
-import { FileCheck2, Sparkles, Droplets, Zap, Users } from 'lucide-react';
+import { formatMoney, daysBetween, parseDate } from '@/utils';
+import { FileCheck2, Sparkles, Droplets, Zap, Users, AlertCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function BillGenerator() {
@@ -37,14 +37,22 @@ export default function BillGenerator() {
   const [elecPrice, setElecPrice] = useState(0.85);
   const [commonArea, setCommonArea] = useState(120);
 
-  const result = useMemo(() => {
-    if (!startDate || !endDate) return null;
-    return computeBillingSegments(startDate, endDate, seasonTiers);
-  }, [startDate, endDate, seasonTiers]);
+  const dateInvalid = startDate && endDate && parseDate(startDate) >= parseDate(endDate);
 
   const prop = properties.find(p => p.id === propertyId);
   const landlord = prop ? landlords.find(l => l.id === prop.landlordId) : null;
   const splitRule = prop ? splitRules.find(r => r.id === prop.splitRuleId) : splitRules[0];
+
+  const boundTier = prop ? seasonTiers.find(t => t.id === prop.rateTierId) : null;
+  const peakRefTier = seasonTiers.find(t => t.name === '旺季') || seasonTiers[0];
+  const rateMultiplier = boundTier && peakRefTier
+    ? Number((boundTier.dailyRate / peakRefTier.dailyRate).toFixed(4))
+    : 1;
+
+  const result = useMemo(() => {
+    if (!startDate || !endDate || dateInvalid) return null;
+    return computeBillingSegments(startDate, endDate, seasonTiers, rateMultiplier);
+  }, [startDate, endDate, seasonTiers, dateInvalid, rateMultiplier]);
 
   const utilities = useMemo(() => {
     const u = utilityDefaults();
@@ -61,6 +69,7 @@ export default function BillGenerator() {
 
   const submit = () => {
     if (!prop) return;
+    if (dateInvalid) return;
     const bill = generateBill({
       propertyId,
       tenantName,
@@ -114,6 +123,10 @@ export default function BillGenerator() {
                 <div className="flex justify-between"><span>房源编号</span><span className="font-mono">{prop.code}</span></div>
                 <div className="flex justify-between"><span>业主</span><span>{landlord?.name || '-'}</span></div>
                 <div className="flex justify-between"><span>分账规则</span><span>{splitRule?.name || '-'}</span></div>
+                <div className="flex justify-between"><span>绑定费率</span><span>{boundTier ? `${boundTier.name}（日¥${boundTier.dailyRate}）` : '未绑定'}</span></div>
+                {rateMultiplier !== 1 && (
+                  <div className="flex justify-between"><span>费率系数</span><span className="font-semibold text-gold-500">×{rateMultiplier.toFixed(4)}</span></div>
+                )}
                 <div className="flex justify-between"><span>出租状态</span><span>{prop.status === 'rented' ? '在租' : '空置'}</span></div>
               </div>
             )}
@@ -147,6 +160,13 @@ export default function BillGenerator() {
                 />
               </label>
             </div>
+
+            {dateInvalid && (
+              <div className="p-3 rounded-lg bg-coral-500/10 border border-coral-500/30 flex items-center gap-2 text-sm text-coral-500">
+                <AlertCircle size={16} />
+                <span className="font-medium">起租日不能晚于或等于结束日，请调整租期区间</span>
+              </div>
+            )}
 
             {result && (
               <div className="p-3 rounded-lg bg-gradient-to-r from-gold-100 to-cream-800 text-xs flex items-center justify-between">
@@ -242,6 +262,10 @@ export default function BillGenerator() {
             </div>
             {result && result.segments.length > 0 ? (
               <SegmentBar segments={result.segments} totalRent={result.baseRent} />
+            ) : dateInvalid ? (
+              <div className="h-28 flex items-center justify-center text-sm text-coral-500 bg-coral-500/10 rounded-lg border border-coral-500/30">
+                <AlertCircle size={16} className="mr-2" /> 起租日晚于结束日，无法计费
+              </div>
             ) : (
               <div className="h-28 flex items-center justify-center text-sm text-ink-700 bg-cream-800/40 rounded-lg border border-dashed border-gold-300">
                 请设置有效的租期区间
@@ -287,7 +311,8 @@ export default function BillGenerator() {
 
           <button
             onClick={submit}
-            className="btn-elev w-full h-14 rounded-xl bg-gradient-to-br from-ink-900 via-ink-800 to-ink-700 text-cream-900 font-serif font-bold text-lg shadow-elevated inline-flex items-center justify-center gap-3"
+            disabled={dateInvalid || !result}
+            className="btn-elev w-full h-14 rounded-xl bg-gradient-to-br from-ink-900 via-ink-800 to-ink-700 text-cream-900 font-serif font-bold text-lg shadow-elevated inline-flex items-center justify-center gap-3 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Sparkles size={20} className="text-gold-400" />
             一键生成账单

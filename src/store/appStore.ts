@@ -31,6 +31,7 @@ interface AppState {
   generateBill: (params: GenerateBillParams) => Bill;
   updateBillStatus: (id: string, status: Bill['status']) => void;
   deleteBill: (id: string) => void;
+  updateBillUtilities: (id: string, water: { usage: number; amount: number; unitPrice: number; previous: number; current: number }, electric: { usage: number; amount: number; unitPrice: number; previous: number; current: number }, commonArea: number) => void;
 
   runMonthlyReconciliation: (period: string) => Settlement[];
   approveSettlement: (id: string) => void;
@@ -85,8 +86,14 @@ export const useAppStore = create<AppState>()(
         const prop = s.properties.find(p => p.id === params.propertyId)!;
         const rule = s.splitRules.find(r => r.id === prop.splitRuleId)!;
 
+        const boundTier = s.seasonTiers.find(t => t.id === prop.rateTierId);
+        const peakRefTier = s.seasonTiers.find(t => t.name === '旺季') || s.seasonTiers[0];
+        const rateMultiplier = boundTier && peakRefTier
+          ? Number((boundTier.dailyRate / peakRefTier.dailyRate).toFixed(4))
+          : 1;
+
         const { segments, baseRent, totalDays } = computeBillingSegments(
-          params.startDate, params.endDate, s.seasonTiers,
+          params.startDate, params.endDate, s.seasonTiers, rateMultiplier,
         );
 
         const utils = utilityDefaults();
@@ -128,6 +135,25 @@ export const useAppStore = create<AppState>()(
         bills: s.bills.map(b => b.id === id ? { ...b, status } : b),
       })),
       deleteBill: (id) => set(s => ({ bills: s.bills.filter(b => b.id !== id) })),
+
+      updateBillUtilities: (id, water, electric, commonArea) => set(s => ({
+        bills: s.bills.map(b => {
+          if (b.id !== id) return b;
+          const newUtils = {
+            water: { type: 'water' as const, ...water },
+            electric: { type: 'electric' as const, ...electric },
+            commonArea,
+          };
+          const totalAmount = Number(
+            (b.baseRent + newUtils.water.amount + newUtils.electric.amount + newUtils.commonArea).toFixed(2),
+          );
+          const rule = s.splitRules.find(r => r.id === b.splitResult.ruleId);
+          const splitResult = rule
+            ? computeSplit(b.baseRent, newUtils, rule)
+            : b.splitResult;
+          return { ...b, utilities: newUtils, totalAmount, splitResult };
+        }),
+      })),
 
       runMonthlyReconciliation: (period) => {
         const s = get();

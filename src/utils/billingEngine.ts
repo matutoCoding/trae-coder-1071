@@ -24,7 +24,8 @@ const getTierForDate = (year: number, month: number, day: number, tiers: SeasonT
 export const computeBillingSegments = (
   startDate: string,
   endDate: string,
-  tiers: SeasonTier[]
+  tiers: SeasonTier[],
+  rateMultiplier: number = 1,
 ): { segments: BillingSegment[]; baseRent: number; totalDays: number } => {
   const start = parseDate(startDate);
   const end = parseDate(endDate);
@@ -71,7 +72,9 @@ export const computeBillingSegments = (
     const segEnd = next ? formatDate(new Date(next.date.getTime() - 86400000)) : endDate;
     const d = daysBetween(segStart, segEnd);
     if (d > 0) {
-      const amount = d * cur.tier.dailyRate;
+      const rawPrice = cur.tier.dailyRate;
+      const adjustedPrice = Number((rawPrice * rateMultiplier).toFixed(2));
+      const amount = d * adjustedPrice;
       segments.push({
         tierId: cur.tier.id,
         tierName: cur.tier.name,
@@ -79,7 +82,7 @@ export const computeBillingSegments = (
         startDate: segStart,
         endDate: segEnd,
         days: d,
-        unitPrice: cur.tier.dailyRate,
+        unitPrice: adjustedPrice,
         amount,
       });
     }

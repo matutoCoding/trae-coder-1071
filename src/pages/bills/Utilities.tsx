@@ -7,7 +7,7 @@ import { Droplets, Zap, Building2, Calculator, Users, Ruler } from 'lucide-react
 type Rule = 'area' | 'count' | 'flat';
 
 export default function Utilities() {
-  const { properties, bills } = useAppStore();
+  const { properties, bills, updateBillUtilities } = useAppStore();
   const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [waterTotal, setWaterTotal] = useState(2480);
   const [waterUnitPrice, setWaterUnitPrice] = useState(5.5);
@@ -15,6 +15,7 @@ export default function Utilities() {
   const [elecUnitPrice, setElecUnitPrice] = useState(0.85);
   const [commonFee, setCommonFee] = useState(3600);
   const [rule, setRule] = useState<Rule>('area');
+  const [applyResult, setApplyResult] = useState<string | null>(null);
 
   const billed = useMemo(() => {
     return properties.filter(p => p.status === 'rented').map(p => {
@@ -34,6 +35,27 @@ export default function Utilities() {
     count: '按户数均摊',
     flat: '按固定金额均摊',
   }[rule];
+
+  const applyToBills = () => {
+    let updated = 0;
+    billed.forEach(({ property: p, bill }) => {
+      if (!bill) return;
+      const base = rule === 'area' ? p.area : 1;
+      const wUsage = Number((waterPerUnit * base).toFixed(1));
+      const wAmount = Number((wUsage * waterUnitPrice).toFixed(2));
+      const eUsage = Number((elecPerUnit * base).toFixed(0));
+      const eAmount = Number((eUsage * elecUnitPrice).toFixed(2));
+      const cAmount = Number((commonPerUnit * base).toFixed(2));
+      updateBillUtilities(bill.id,
+        { usage: wUsage, amount: wAmount, unitPrice: waterUnitPrice, previous: bill.utilities.water.previous, current: bill.utilities.water.previous + wUsage },
+        { usage: eUsage, amount: eAmount, unitPrice: elecUnitPrice, previous: bill.utilities.electric.previous, current: bill.utilities.electric.previous + eUsage },
+        cAmount,
+      );
+      updated += 1;
+    });
+    setApplyResult(`已更新 ${updated} 笔账单的水电公摊金额`);
+    setTimeout(() => setApplyResult(null), 4000);
+  };
 
   return (
     <div className="space-y-6">
@@ -144,9 +166,20 @@ export default function Utilities() {
                 <div className="font-serif text-base font-semibold text-ink-900">房源分摊明细</div>
                 <div className="text-xs text-ink-700 mt-0.5">{period} 账期 · 依据「{ruleLabel}」</div>
               </div>
-              <button className="h-9 px-4 rounded-lg bg-gradient-to-br from-gold-400 to-gold-500 text-ink-900 text-sm font-semibold shadow-card btn-elev inline-flex items-center gap-2">
-                <Calculator size={14} /> 应用到各账单
-              </button>
+              <div className="flex items-center gap-3">
+                {applyResult && (
+                  <span className="text-xs font-semibold text-ink-900 bg-ink-500/15 px-3 py-1.5 rounded-lg">
+                    {applyResult}
+                  </span>
+                )}
+                <button
+                  onClick={applyToBills}
+                  disabled={billed.filter(x => x.bill).length === 0}
+                  className="h-9 px-4 rounded-lg bg-gradient-to-br from-gold-400 to-gold-500 text-ink-900 text-sm font-semibold shadow-card btn-elev inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Calculator size={14} /> 应用到各账单
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full table-zebra text-sm">
