@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   SeasonTier, Landlord, SplitRule, Property, Bill, Settlement, GenerateBillParams, PartyType,
+  ReconciliationResult,
 } from '@/types';
 import {
   defaultSeasonTiers, defaultLandlords, defaultSplitRules, defaultProperties,
@@ -32,10 +33,14 @@ interface AppState {
   updateBillStatus: (id: string, status: Bill['status']) => void;
   deleteBill: (id: string) => void;
   updateBillUtilities: (id: string, water: { usage: number; amount: number; unitPrice: number; previous: number; current: number }, electric: { usage: number; amount: number; unitPrice: number; previous: number; current: number }, commonArea: number) => void;
+  batchUpdateBillStatus: (ids: string[], status: Bill['status']) => void;
+  batchDeleteBills: (ids: string[]) => void;
+  updateBillUtilitiesByPropertyPeriod: (propertyId: string, period: string, water: { usage: number; amount: number; unitPrice: number; previous: number; current: number }, electric: { usage: number; amount: number; unitPrice: number; previous: number; current: number }, commonArea: number) => number;
 
-  runMonthlyReconciliation: (period: string) => Settlement[];
+  runMonthlyReconciliation: (period: string, forceRegenerate?: boolean) => ReconciliationResult;
   approveSettlement: (id: string) => void;
   markSettlementPaid: (id: string) => void;
+  deleteSettlementByPeriod: (period: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -136,6 +141,11 @@ export const useAppStore = create<AppState>()(
       })),
       deleteBill: (id) => set(s => ({ bills: s.bills.filter(b => b.id !== id) })),
 
+      batchUpdateBillStatus: (ids, status) => set(s => ({
+        bills: s.bills.map(b => ids.includes(b.id) ? { ...b, status } : b),
+      })),
+      batchDeleteBills: (ids) => set(s => ({ bills: s.bills.filter(b => !ids.includes(b.id)) })),
+
       updateBillUtilities: (id, water, electric, commonArea) => set(s => ({
         bills: s.bills.map(b => {
           if (b.id !== id) return b;
@@ -155,7 +165,31 @@ export const useAppStore = create<AppState>()(
         }),
       })),
 
-      runMonthlyReconciliation: (period) => {
+      updateBillUtilitiesByPropertyPeriod: (propertyId, period, water, electric, commonArea) => {
+        let count = 0;
+        set(s => ({
+          bills: s.bills.map(b => {
+            if (b.propertyId !== propertyId || getYearMonth(b.startDate) !== period) return b;
+            count += 1;
+            const newUtils = {
+              water: { type: 'water' as const, ...water },
+              electric: { type: 'electric' as const, ...electric },
+              commonArea,
+            };
+            const totalAmount = Number(
+              (b.baseRent + newUtils.water.amount + newUtils.electric.amount + newUtils.commonArea).toFixed(2),
+            );
+            const rule = s.splitRules.find(r => r.id === b.splitResult.ruleId);
+            const splitResult = rule
+              ? computeSplit(b.baseRent, newUtils, rule)
+              : b.splitResult;
+            return { ...b, utilities: newUtils, totalAmount, splitResult };
+          }),
+        }));
+        return count;
+      },
+
+      runMonthlyReconciliation: (period, forceRegenerate) => {
         const s = get();
         const periodBills = s.bills.filter(b => getYearMonth(b.startDate) === period);
 
@@ -180,35 +214,124 @@ export const useAppStore = create<AppState>()(
           }
         });
 
-        const existingForPeriod = new Set(
-          s.settlements.filter(x => x.period === period).map(x => `${x.partyType}_${x.partyId}`),
-        );
-        const newSettlements: Settlement[] = [];
-
+        const newAmounts = new Map<string, { amount: number; count: number; partyType: PartyType; partyId: string; partyName: string }>();
         [
           { id: 'platform', name: '运营平台', amount: platform.amount, count: platform.count, partyType: 'platform' as PartyType },
           { id: 'property', name: '物业服务中心', amount: property.amount, count: property.count, partyType: 'property' as PartyType },
           ...Array.from(byLandlord.values()).map(v => ({ ...v, partyType: 'landlord' as PartyType })),
-        ].forEach((p, i) => {
+        ].forEach(p => {
           const key = `${p.partyType}_${p.id}`;
-          if (!existingForPeriod.has(key)) {
+          newAmounts.set(key, {
+            amount: Number(p.amount.toFixed(2)),
+            count: p.count,
+            partyType: p.partyType,
+            partyId: p.id,
+            partyName: p.name,
+          });
+        });
+
+        const existingForPeriod = s.settlements.filter(x => x.period === period);
+        const diffs: ReconciliationResult['diffs'] = [];
+
+        const allKeys = new Set([
+          ...existingForPeriod.map(x => `${x.partyType}_${x.partyId}`),
+          ...newAmounts.keys(),
+        ]);
+
+        allKeys.forEach(key => {
+          const existing = existingForPeriod.find(x => `${x.partyType}_${x.partyId}` === key);
+          const nw = newAmounts.get(key);
+          if (existing && nw) {
+            const diffAmount = Number((nw.amount - existing.totalAmount).toFixed(2));
+            const diffBillCount = nw.count - existing.billCount;
+            if (diffAmount !== 0 || diffBillCount !== 0) {
+              diffs.push({
+                partyType: existing.partyType,
+                partyId: existing.partyId,
+                partyName: existing.partyName,
+                existingAmount: existing.totalAmount,
+                newAmount: nw.amount,
+                diffAmount,
+                existingBillCount: existing.billCount,
+                newBillCount: nw.count,
+                diffBillCount,
+              });
+            }
+          } else if (existing && !nw) {
+            diffs.push({
+              partyType: existing.partyType,
+              partyId: existing.partyId,
+              partyName: existing.partyName,
+              existingAmount: existing.totalAmount,
+              newAmount: 0,
+              diffAmount: Number((0 - existing.totalAmount).toFixed(2)),
+              existingBillCount: existing.billCount,
+              newBillCount: 0,
+              diffBillCount: -existing.billCount,
+            });
+          } else if (!existing && nw) {
+            diffs.push({
+              partyType: nw.partyType,
+              partyId: nw.partyId,
+              partyName: nw.partyName,
+              existingAmount: 0,
+              newAmount: nw.amount,
+              diffAmount: nw.amount,
+              existingBillCount: 0,
+              newBillCount: nw.count,
+              diffBillCount: nw.count,
+            });
+          }
+        });
+
+        const newSettlements: Settlement[] = [];
+        const existingKeys = new Set(existingForPeriod.map(x => `${x.partyType}_${x.partyId}`));
+
+        if (forceRegenerate) {
+          set(st => ({ settlements: st.settlements.filter(x => x.period !== period) }));
+          Array.from(newAmounts.entries()).forEach(([key, p], i) => {
             newSettlements.push({
               id: uid(),
               settlementNo: `ST-${period}-${String(i + 1).padStart(3, '0')}`,
               period,
               partyType: p.partyType,
-              partyId: p.id,
-              partyName: p.name,
+              partyId: p.partyId,
+              partyName: p.partyName,
               billCount: p.count,
-              totalAmount: Number(p.amount.toFixed(2)),
+              totalAmount: p.amount,
               status: 'pending',
             });
-          }
-        });
+          });
+          set(st => ({ settlements: [...newSettlements, ...st.settlements] }));
+        } else {
+          Array.from(newAmounts.entries()).forEach(([key, p], i) => {
+            if (!existingKeys.has(key)) {
+              newSettlements.push({
+                id: uid(),
+                settlementNo: `ST-${period}-${String(i + 1).padStart(3, '0')}`,
+                period,
+                partyType: p.partyType,
+                partyId: p.partyId,
+                partyName: p.partyName,
+                billCount: p.count,
+                totalAmount: p.amount,
+                status: 'pending',
+              });
+            }
+          });
+          set(st => ({ settlements: [...newSettlements, ...st.settlements] }));
+        }
 
-        set(st => ({ settlements: [...newSettlements, ...st.settlements] }));
-        return newSettlements;
+        return {
+          newSettlements,
+          diffs,
+          hasDiff: diffs.length > 0,
+        };
       },
+
+      deleteSettlementByPeriod: (period) => set(s => ({
+        settlements: s.settlements.filter(x => x.period !== period),
+      })),
 
       approveSettlement: (id) => set(s => ({
         settlements: s.settlements.map(x => x.id === id ? { ...x, status: 'approved' } : x),

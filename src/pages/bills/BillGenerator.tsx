@@ -37,7 +37,7 @@ export default function BillGenerator() {
   const [elecPrice, setElecPrice] = useState(0.85);
   const [commonArea, setCommonArea] = useState(120);
 
-  const dateInvalid = startDate && endDate && parseDate(startDate) >= parseDate(endDate);
+  const dateInvalid = startDate && endDate && parseDate(startDate) > parseDate(endDate);
 
   const prop = properties.find(p => p.id === propertyId);
   const landlord = prop ? landlords.find(l => l.id === prop.landlordId) : null;
@@ -164,7 +164,7 @@ export default function BillGenerator() {
             {dateInvalid && (
               <div className="p-3 rounded-lg bg-coral-500/10 border border-coral-500/30 flex items-center gap-2 text-sm text-coral-500">
                 <AlertCircle size={16} />
-                <span className="font-medium">起租日不能晚于或等于结束日，请调整租期区间</span>
+                <span className="font-medium">起租日不能晚于结束日，请调整租期区间</span>
               </div>
             )}
 

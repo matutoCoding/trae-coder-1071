@@ -7,7 +7,7 @@ import { Droplets, Zap, Building2, Calculator, Users, Ruler } from 'lucide-react
 type Rule = 'area' | 'count' | 'flat';
 
 export default function Utilities() {
-  const { properties, bills, updateBillUtilities } = useAppStore();
+  const { properties, bills, updateBillUtilitiesByPropertyPeriod } = useAppStore();
   const [period, setPeriod] = useState(() => new Date().toISOString().slice(0, 7));
   const [waterTotal, setWaterTotal] = useState(2480);
   const [waterUnitPrice, setWaterUnitPrice] = useState(5.5);
@@ -37,7 +37,7 @@ export default function Utilities() {
   }[rule];
 
   const applyToBills = () => {
-    let updated = 0;
+    let totalUpdated = 0;
     billed.forEach(({ property: p, bill }) => {
       if (!bill) return;
       const base = rule === 'area' ? p.area : 1;
@@ -46,14 +46,14 @@ export default function Utilities() {
       const eUsage = Number((elecPerUnit * base).toFixed(0));
       const eAmount = Number((eUsage * elecUnitPrice).toFixed(2));
       const cAmount = Number((commonPerUnit * base).toFixed(2));
-      updateBillUtilities(bill.id,
+      const count = updateBillUtilitiesByPropertyPeriod(p.id, period,
         { usage: wUsage, amount: wAmount, unitPrice: waterUnitPrice, previous: bill.utilities.water.previous, current: bill.utilities.water.previous + wUsage },
         { usage: eUsage, amount: eAmount, unitPrice: elecUnitPrice, previous: bill.utilities.electric.previous, current: bill.utilities.electric.previous + eUsage },
         cAmount,
       );
-      updated += 1;
+      totalUpdated += count;
     });
-    setApplyResult(`已更新 ${updated} 笔账单的水电公摊金额`);
+    setApplyResult(`已更新 ${totalUpdated} 笔账单的水电公摊金额`);
     setTimeout(() => setApplyResult(null), 4000);
   };
 

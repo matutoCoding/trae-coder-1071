@@ -113,3 +113,21 @@ export interface GenerateBillParams {
   electric?: { previous: number; current: number; unitPrice: number };
   commonArea?: number;
 }
+
+export interface ReconciliationDiff {
+  partyType: PartyType;
+  partyId: string;
+  partyName: string;
+  existingAmount: number;
+  newAmount: number;
+  diffAmount: number;
+  existingBillCount: number;
+  newBillCount: number;
+  diffBillCount: number;
+}
+
+export interface ReconciliationResult {
+  newSettlements: Settlement[];
+  diffs: ReconciliationDiff[];
+  hasDiff: boolean;
+}

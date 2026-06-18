@@ -3,12 +3,14 @@ import PageHeader from '@/components/PageHeader';
 import { useAppStore, currentPeriod } from '@/store/appStore';
 import { formatMoney, getYearMonth } from '@/utils';
 import { SettlementStatusBadge, PartyBadge } from '@/components/StatusBadge';
-import { FileCheck2, Filter, AlertCircle, RefreshCw, CheckCircle2, Send } from 'lucide-react';
+import { FileCheck2, Filter, AlertCircle, RefreshCw, CheckCircle2, Send, TrendingUp, TrendingDown, Minus, RotateCcw } from 'lucide-react';
+import type { ReconciliationResult } from '@/types';
 
 export default function MonthlyReconciliation() {
   const { bills, settlements, runMonthlyReconciliation, approveSettlement, markSettlementPaid } = useAppStore();
   const [period, setPeriod] = useState(currentPeriod());
   const [partyFilter, setPartyFilter] = useState<'all' | 'platform' | 'landlord' | 'property'>('all');
+  const [reconResult, setReconResult] = useState<ReconciliationResult | null>(null);
 
   const periodBills = bills.filter(b => getYearMonth(b.startDate) === period);
   const periodSettlements = useMemo(
@@ -26,10 +28,24 @@ export default function MonthlyReconciliation() {
     };
   }, [periodSettlements]);
 
-  const runRecon = () => {
-    const created = runMonthlyReconciliation(period);
-    if (created.length === 0) alert('该账期已完成对账，无新增结算单。');
-    else alert(`已生成 ${created.length} 张结算单！`);
+  const runRecon = (forceRegenerate = false) => {
+    const result = runMonthlyReconciliation(period, forceRegenerate);
+    setReconResult(result);
+    if (forceRegenerate) {
+      alert(`已重新生成 ${result.newSettlements.length} 张结算单！`);
+    } else if (result.hasDiff) {
+      // 有差异但不自动重生成
+    } else if (result.newSettlements.length === 0) {
+      alert('该账期已完成对账，无新增结算单。');
+    } else {
+      alert(`已生成 ${result.newSettlements.length} 张结算单！`);
+    }
+  };
+
+  const handleRegenerate = () => {
+    if (confirm(`确定要重新生成 ${period} 账期的所有结算单？已审批/已打款状态将被重置。`)) {
+      runRecon(true);
+    }
   };
 
   return (
@@ -38,13 +54,24 @@ export default function MonthlyReconciliation() {
         title="月度对账"
         description="按月归集所有账单，一键生成平台/房东/物业三方结算单，完成审批与打款流程。"
         actions={
-          <button
-            onClick={runRecon}
-            disabled={periodBills.length === 0}
-            className="btn-elev inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-gradient-to-br from-gold-400 to-gold-500 text-ink-900 font-semibold text-sm shadow-card disabled:opacity-50"
-          >
-            <RefreshCw size={16} /> 执行对账核算
-          </button>
+          <div className="flex items-center gap-2">
+            {periodSettlements.length > 0 && (
+              <button
+                onClick={handleRegenerate}
+                disabled={periodBills.length === 0}
+                className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-white border border-gold-300 text-ink-800 font-medium text-sm hover:bg-cream-800 disabled:opacity-50"
+              >
+                <RotateCcw size={16} /> 重新生成结算
+              </button>
+            )}
+            <button
+              onClick={() => runRecon()}
+              disabled={periodBills.length === 0}
+              className="btn-elev inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-gradient-to-br from-gold-400 to-gold-500 text-ink-900 font-semibold text-sm shadow-card disabled:opacity-50"
+            >
+              <RefreshCw size={16} /> 执行对账核算
+            </button>
+          </div>
         }
       >
         <div className="flex flex-wrap items-center gap-3">
@@ -97,7 +124,7 @@ export default function MonthlyReconciliation() {
           </div>
           <div className="mt-5 inline-flex gap-3">
             <button
-              onClick={runRecon}
+              onClick={() => runRecon()}
               className="btn-elev inline-flex items-center gap-2 px-6 h-11 rounded-xl bg-gradient-to-br from-ink-900 to-ink-700 text-cream-900 font-serif font-bold shadow-elevated"
             >
               <RefreshCw size={18} /> 一键生成结算单
@@ -106,6 +133,59 @@ export default function MonthlyReconciliation() {
         </div>
       ) : (
         <>
+          {reconResult && reconResult.hasDiff && (
+            <div className="p-5 rounded-xl bg-coral-500/10 border border-coral-300 space-y-4">
+              <div className="flex items-center gap-3">
+                <AlertCircle size={22} className="text-coral-500 flex-shrink-0" />
+                <div className="flex-1">
+                  <div className="font-semibold text-ink-900">检测到结算金额差异</div>
+                  <div className="text-sm text-ink-700 mt-0.5">本期账单有调整（水电更新/账单增删），以下收款方的应结金额与已有结算单不一致</div>
+                </div>
+                <button
+                  onClick={handleRegenerate}
+                  className="inline-flex items-center gap-1.5 h-9 px-4 rounded-md bg-coral-500 text-white text-xs font-semibold hover:bg-coral-600"
+                >
+                  <RotateCcw size={14} /> 重新生成结算
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-ink-700 uppercase tracking-wider">
+                      <th className="px-3 py-2 text-left font-semibold">收款方</th>
+                      <th className="px-3 py-2 text-center font-semibold">类型</th>
+                      <th className="px-3 py-2 text-right font-semibold">原有金额</th>
+                      <th className="px-3 py-2 text-right font-semibold">现有金额</th>
+                      <th className="px-3 py-2 text-right font-semibold">差额</th>
+                      <th className="px-3 py-2 text-center font-semibold">账单数变化</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reconResult.diffs.map((d, i) => (
+                      <tr key={i} className="border-t border-coral-200/50">
+                        <td className="px-3 py-2.5 font-medium text-ink-900">{d.partyName}</td>
+                        <td className="px-3 py-2.5 text-center"><PartyBadge type={d.partyType} /></td>
+                        <td className="px-3 py-2.5 text-right text-ink-700">{formatMoney(d.existingAmount)}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold text-ink-900">{formatMoney(d.newAmount)}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          <span className={`inline-flex items-center gap-1 font-semibold ${
+                            d.diffAmount > 0 ? 'text-green-600' : d.diffAmount < 0 ? 'text-coral-500' : 'text-ink-700'
+                          }`}>
+                            {d.diffAmount > 0 ? <TrendingUp size={14} /> : d.diffAmount < 0 ? <TrendingDown size={14} /> : <Minus size={14} />}
+                            {d.diffAmount > 0 ? '+' : ''}{formatMoney(d.diffAmount)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 text-center text-xs text-ink-700">
+                          {d.diffBillCount > 0 ? '+' : ''}{d.diffBillCount} 笔
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="p-4 rounded-xl bg-white shadow-card border border-gold-200">
               <div className="text-xs text-ink-700 uppercase tracking-wide">结算单总计</div>

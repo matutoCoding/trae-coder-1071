@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import PageHeader from '@/components/PageHeader';
 import { useAppStore } from '@/store/appStore';
 import { formatMoney, getYearMonth } from '@/utils';
 import { BillStatusBadge } from '@/components/StatusBadge';
-import { Search, Filter, Plus, Eye, Trash2, CheckCircle2 } from 'lucide-react';
+import { Search, Filter, Plus, Eye, Trash2, CheckCircle2, CheckSquare, Square, DollarSign } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Bill } from '@/types';
 
@@ -16,11 +16,12 @@ const filters: { key: Bill['status'] | 'all'; label: string }[] = [
 ];
 
 export default function BillList() {
-  const { bills, updateBillStatus, deleteBill } = useAppStore();
+  const { bills, updateBillStatus, deleteBill, batchUpdateBillStatus, batchDeleteBills } = useAppStore();
   const [q, setQ] = useState('');
   const [f, setF] = useState<Bill['status'] | 'all'>('all');
   const [period, setPeriod] = useState('');
   const [viewing, setViewing] = useState<Bill | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const nav = useNavigate();
 
   const list = bills.filter(b => {
@@ -31,6 +32,61 @@ export default function BillList() {
   });
 
   const totalAmount = list.reduce((s, b) => s + b.totalAmount, 0);
+
+  const allSelected = list.length > 0 && list.every(b => selectedIds.has(b.id));
+  const someSelected = list.some(b => selectedIds.has(b.id));
+
+  const batchStats = useMemo(() => {
+    const selected = list.filter(b => selectedIds.has(b.id));
+    return {
+      count: selected.length,
+      amount: selected.reduce((s, b) => s + b.totalAmount, 0),
+      canConfirm: selected.some(b => b.status === 'generated'),
+      canMarkPaid: selected.some(b => b.status === 'confirmed'),
+    };
+  }, [selectedIds, list]);
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(list.map(b => b.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const handleBatchConfirm = () => {
+    const ids = list.filter(b => selectedIds.has(b.id) && b.status === 'generated').map(b => b.id);
+    if (ids.length === 0) return;
+    if (confirm(`确认将选中的 ${ids.length} 笔账单标记为「已确认」？`)) {
+      batchUpdateBillStatus(ids, 'confirmed');
+      setSelectedIds(new Set());
+    }
+  };
+
+  const handleBatchMarkPaid = () => {
+    const ids = list.filter(b => selectedIds.has(b.id) && b.status === 'confirmed').map(b => b.id);
+    if (ids.length === 0) return;
+    if (confirm(`确认将选中的 ${ids.length} 笔账单标记为「已收款」？`)) {
+      batchUpdateBillStatus(ids, 'paid');
+      setSelectedIds(new Set());
+    }
+  };
+
+  const handleBatchDelete = () => {
+    const ids = list.filter(b => selectedIds.has(b.id)).map(b => b.id);
+    if (ids.length === 0) return;
+    if (confirm(`确认删除选中的 ${ids.length} 笔账单？此操作不可恢复。`)) {
+      batchDeleteBills(ids);
+      setSelectedIds(new Set());
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -85,11 +141,56 @@ export default function BillList() {
         </div>
       </PageHeader>
 
+      {someSelected && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-ink-900 to-ink-800 text-cream-900 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <CheckSquare size={18} className="text-gold-400" />
+            <span className="text-sm">已选择 <b className="text-gold-400">{batchStats.count}</b> 笔账单</span>
+            <span className="text-xs text-cream-700">合计应收 {formatMoney(batchStats.amount)}</span>
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            {batchStats.canConfirm && (
+              <button
+                onClick={handleBatchConfirm}
+                className="h-9 px-4 rounded-md bg-ink-500/40 text-cream-900 hover:bg-ink-500/60 inline-flex items-center gap-1.5 text-xs font-medium"
+              >
+                <CheckCircle2 size={14} /> 批量确认
+              </button>
+            )}
+            {batchStats.canMarkPaid && (
+              <button
+                onClick={handleBatchMarkPaid}
+                className="h-9 px-4 rounded-md bg-gold-400/40 text-ink-900 hover:bg-gold-400/60 inline-flex items-center gap-1.5 text-xs font-semibold"
+              >
+                <DollarSign size={14} /> 批量标记收款
+              </button>
+            )}
+            <button
+              onClick={handleBatchDelete}
+              className="h-9 px-4 rounded-md bg-coral-500/30 text-coral-100 hover:bg-coral-500/50 inline-flex items-center gap-1.5 text-xs font-medium"
+            >
+              <Trash2 size={14} /> 批量删除
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="h-9 px-3 rounded-md bg-ink-700/40 text-cream-700 hover:bg-ink-700/60 text-xs"
+            >
+              取消选择
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl shadow-card border border-gold-200 overflow-hidden">
         <div className="overflow-x-auto -mx-5">
           <table className="w-full table-zebra text-sm">
             <thead>
               <tr className="bg-cream-800/60 text-ink-700 text-xs uppercase tracking-wider">
+                <th className="px-3 py-3 text-center w-10">
+                  <button onClick={toggleSelectAll} className="text-ink-800 hover:text-ink-900">
+                    {allSelected ? <CheckSquare size={16} className="text-ink-900" /> : <Square size={16} />}
+                  </button>
+                </th>
                 <th className="px-5 py-3 text-left font-semibold">账单编号</th>
                 <th className="px-5 py-3 text-left font-semibold">房源</th>
                 <th className="px-5 py-3 text-left font-semibold">租户</th>
@@ -105,6 +206,11 @@ export default function BillList() {
             <tbody>
               {list.map(b => (
                 <tr key={b.id} className="border-t border-gold-100 hover:bg-gold-100/40 transition">
+                  <td className="px-3 py-3 text-center">
+                    <button onClick={() => toggleSelect(b.id)} className="text-ink-800 hover:text-ink-900">
+                      {selectedIds.has(b.id) ? <CheckSquare size={16} className="text-ink-900" /> : <Square size={16} />}
+                    </button>
+                  </td>
                   <td className="px-5 py-3 font-mono text-xs text-ink-700">{b.billNo}</td>
                   <td className="px-5 py-3 font-medium text-ink-900 whitespace-nowrap">{b.propertyName}</td>
                   <td className="px-5 py-3">{b.tenantName}</td>
@@ -152,7 +258,7 @@ export default function BillList() {
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-5 py-16 text-center text-ink-700 text-sm">
+                  <td colSpan={11} className="px-5 py-16 text-center text-ink-700 text-sm">
                     暂无匹配账单
                     <Link to="/bills/generator" className="ml-2 text-gold-500 hover:underline">立即创建</Link>
                   </td>
