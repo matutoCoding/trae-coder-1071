@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   SeasonTier, Landlord, SplitRule, Property, Bill, Settlement, GenerateBillParams, PartyType,
-  ReconciliationResult, ReconHistoryEntry,
+  ReconciliationResult, ReconHistoryEntry, PayoutBatch, PeriodLock, AppUser,
 } from '@/types';
 import {
   defaultSeasonTiers, defaultLandlords, defaultSplitRules, defaultProperties,
@@ -20,6 +20,9 @@ interface AppState {
   bills: Bill[];
   settlements: Settlement[];
   reconHistory: ReconHistoryEntry[];
+  payoutBatches: PayoutBatch[];
+  periodLocks: PeriodLock[];
+  currentUser: AppUser;
 
   upsertSeasonTier: (t: SeasonTier) => void;
   deleteSeasonTier: (id: string) => void;
@@ -44,7 +47,15 @@ interface AppState {
   deleteSettlementByPeriod: (period: string) => void;
   batchApproveSettlements: (ids: string[]) => void;
   batchMarkSettlementsPaid: (ids: string[]) => void;
-  addReconHistory: (entry: Omit<ReconHistoryEntry, 'id' | 'timestamp'>) => void;
+  addReconHistory: (entry: Omit<ReconHistoryEntry, 'id' | 'timestamp' | 'operator' | 'operatorRole'>) => void;
+
+  isPeriodLocked: (period: string) => boolean;
+  getPeriodLock: (period: string) => PeriodLock | undefined;
+  lockPeriod: (period: string) => { success: boolean; message?: string };
+  unlockPeriod: (period: string, reason: string) => { success: boolean; message?: string };
+
+  createPayoutBatch: (params: { period: string; partyType: PartyType; partyId: string; partyName: string; bankAccount?: string; settlementIds: string[]; totalAmount: number }) => { success: boolean; message?: string; batch?: PayoutBatch };
+  markPayoutBatchPaid: (batchId: string) => { success: boolean; message?: string };
 }
 
 export const useAppStore = create<AppState>()(
@@ -57,6 +68,9 @@ export const useAppStore = create<AppState>()(
       bills: initialBills,
       settlements: initialSettlements,
       reconHistory: [],
+      payoutBatches: [],
+      periodLocks: [],
+      currentUser: { id: 'u001', name: '张财务', role: '财务主管' },
 
       upsertSeasonTier: (t) => set(s => {
         const i = s.seasonTiers.findIndex(x => x.id === t.id);
@@ -92,6 +106,10 @@ export const useAppStore = create<AppState>()(
       deleteSplitRule: (id) => set(s => ({ splitRules: s.splitRules.filter(x => x.id !== id) })),
 
       generateBill: (params) => {
+        const period = getYearMonth(params.startDate);
+        if (get().isPeriodLocked(period)) {
+          throw new Error(`[${period}] 账期已锁定，无法新增账单。如需操作请先解锁。`);
+        }
         const s = get();
         const prop = s.properties.find(p => p.id === params.propertyId)!;
         const rule = s.splitRules.find(r => r.id === prop.splitRuleId)!;
@@ -116,7 +134,6 @@ export const useAppStore = create<AppState>()(
         );
         const splitResult = computeSplit(baseRent, utils, rule);
 
-        const period = getYearMonth(params.startDate);
         const seq = String(s.bills.filter(b => getYearMonth(b.startDate) === period).length + 1).padStart(3, '0');
 
         const bill: Bill = {
@@ -144,33 +161,70 @@ export const useAppStore = create<AppState>()(
       updateBillStatus: (id, status) => set(s => ({
         bills: s.bills.map(b => b.id === id ? { ...b, status } : b),
       })),
-      deleteBill: (id) => set(s => ({ bills: s.bills.filter(b => b.id !== id) })),
+      deleteBill: (id) => {
+        const s = get();
+        const bill = s.bills.find(b => b.id === id);
+        if (bill) {
+          const period = getYearMonth(bill.startDate);
+          if (s.isPeriodLocked(period)) {
+            throw new Error(`[${period}] 账期已锁定，无法删除账单。如需操作请先解锁。`);
+          }
+        }
+        set(st => ({ bills: st.bills.filter(b => b.id !== id) }));
+      },
 
       batchUpdateBillStatus: (ids, status) => set(s => ({
         bills: s.bills.map(b => ids.includes(b.id) ? { ...b, status } : b),
       })),
-      batchDeleteBills: (ids) => set(s => ({ bills: s.bills.filter(b => !ids.includes(b.id)) })),
+      batchDeleteBills: (ids) => {
+        const s = get();
+        const lockedPeriods = new Set<string>();
+        ids.forEach(id => {
+          const bill = s.bills.find(b => b.id === id);
+          if (bill) {
+            const period = getYearMonth(bill.startDate);
+            if (s.isPeriodLocked(period)) lockedPeriods.add(period);
+          }
+        });
+        if (lockedPeriods.size > 0) {
+          throw new Error(`[${Array.from(lockedPeriods).join(', ')}] 账期已锁定，无法删除账单。如需操作请先解锁。`);
+        }
+        set(st => ({ bills: st.bills.filter(b => !ids.includes(b.id)) }));
+      },
 
-      updateBillUtilities: (id, water, electric, commonArea) => set(s => ({
-        bills: s.bills.map(b => {
-          if (b.id !== id) return b;
-          const newUtils = {
-            water: { type: 'water' as const, ...water },
-            electric: { type: 'electric' as const, ...electric },
-            commonArea,
-          };
-          const totalAmount = Number(
-            (b.baseRent + newUtils.water.amount + newUtils.electric.amount + newUtils.commonArea).toFixed(2),
-          );
-          const rule = s.splitRules.find(r => r.id === b.splitResult.ruleId);
-          const splitResult = rule
-            ? computeSplit(b.baseRent, newUtils, rule)
-            : b.splitResult;
-          return { ...b, utilities: newUtils, totalAmount, splitResult };
-        }),
-      })),
+      updateBillUtilities: (id, water, electric, commonArea) => {
+        const s = get();
+        const bill = s.bills.find(b => b.id === id);
+        if (bill) {
+          const period = getYearMonth(bill.startDate);
+          if (s.isPeriodLocked(period)) {
+            throw new Error(`[${period}] 账期已锁定，无法更新水电金额。如需操作请先解锁。`);
+          }
+        }
+        set(st => ({
+          bills: st.bills.map(b => {
+            if (b.id !== id) return b;
+            const newUtils = {
+              water: { type: 'water' as const, ...water },
+              electric: { type: 'electric' as const, ...electric },
+              commonArea,
+            };
+            const totalAmount = Number(
+              (b.baseRent + newUtils.water.amount + newUtils.electric.amount + newUtils.commonArea).toFixed(2),
+            );
+            const rule = st.splitRules.find(r => r.id === b.splitResult.ruleId);
+            const splitResult = rule
+              ? computeSplit(b.baseRent, newUtils, rule)
+              : b.splitResult;
+            return { ...b, utilities: newUtils, totalAmount, splitResult };
+          }),
+        }));
+      },
 
       updateBillUtilitiesByPropertyPeriod: (propertyId, period, water, electric, commonArea) => {
+        if (get().isPeriodLocked(period)) {
+          throw new Error(`[${period}] 账期已锁定，无法更新水电金额。如需操作请先解锁。`);
+        }
         let count = 0;
         set(s => ({
           bills: s.bills.map(b => {
@@ -195,6 +249,9 @@ export const useAppStore = create<AppState>()(
       },
 
       runMonthlyReconciliation: (period, forceRegenerate) => {
+        if (forceRegenerate && get().isPeriodLocked(period)) {
+          throw new Error(`[${period}] 账期已锁定，无法重新生成结算单。如需操作请先解锁。`);
+        }
         const s = get();
         const periodBills = s.bills.filter(b => getYearMonth(b.startDate) === period);
 
@@ -334,9 +391,12 @@ export const useAppStore = create<AppState>()(
         };
       },
 
-      deleteSettlementByPeriod: (period) => set(s => ({
-        settlements: s.settlements.filter(x => x.period !== period),
-      })),
+      deleteSettlementByPeriod: (period) => {
+        if (get().isPeriodLocked(period)) {
+          throw new Error(`[${period}] 账期已锁定，无法删除结算单。如需操作请先解锁。`);
+        }
+        set(s => ({ settlements: s.settlements.filter(x => x.period !== period) }));
+      },
 
       approveSettlement: (id) => set(s => ({
         settlements: s.settlements.map(x => x.id === id ? { ...x, status: 'approved' } : x),
@@ -361,10 +421,133 @@ export const useAppStore = create<AppState>()(
             ...entry,
             id: uid(),
             timestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
+            operator: s.currentUser.name,
+            operatorRole: s.currentUser.role,
           },
           ...s.reconHistory,
         ].slice(0, 100),
       })),
+
+      isPeriodLocked: (period) => {
+        const lock = get().periodLocks.find(l => l.period === period);
+        return !!lock?.locked;
+      },
+      getPeriodLock: (period) => get().periodLocks.find(l => l.period === period),
+      lockPeriod: (period) => {
+        const s = get();
+        const existing = s.periodLocks.find(l => l.period === period);
+        if (existing?.locked) return { success: false, message: '该账期已锁定' };
+        const newLock: PeriodLock = {
+          period,
+          locked: true,
+          lockedAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+          lockedBy: s.currentUser.name,
+        };
+        set(st => ({
+          periodLocks: existing
+            ? st.periodLocks.map(l => l.period === period ? newLock : l)
+            : [...st.periodLocks, newLock],
+        }));
+        const bills = s.bills.filter(b => getYearMonth(b.startDate) === period);
+        s.addReconHistory({
+          period,
+          action: 'lock',
+          actionLabel: '锁定账期',
+          billCount: bills.length,
+          totalAmount: bills.reduce((sum, b) => sum + b.totalAmount, 0),
+        });
+        return { success: true };
+      },
+      unlockPeriod: (period, reason) => {
+        const s = get();
+        const existing = s.periodLocks.find(l => l.period === period);
+        if (!existing?.locked) return { success: false, message: '该账期未锁定' };
+        const updated: PeriodLock = {
+          ...existing,
+          locked: false,
+          unlockedAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+          unlockedBy: s.currentUser.name,
+          unlockReason: reason,
+        };
+        set(st => ({
+          periodLocks: st.periodLocks.map(l => l.period === period ? updated : l),
+        }));
+        const bills = s.bills.filter(b => getYearMonth(b.startDate) === period);
+        s.addReconHistory({
+          period,
+          action: 'unlock',
+          actionLabel: '解锁账期',
+          billCount: bills.length,
+          totalAmount: bills.reduce((sum, b) => sum + b.totalAmount, 0),
+          diffSummary: reason,
+        });
+        return { success: true };
+      },
+
+      createPayoutBatch: (params) => {
+        const { period, partyType, partyId, partyName, bankAccount, settlementIds, totalAmount } = params;
+        const s = get();
+        const selected = s.settlements.filter(x =>
+          settlementIds.includes(x.id) &&
+          x.status === 'approved' &&
+          x.period === period &&
+          x.partyType === partyType &&
+          x.partyId === partyId &&
+          !x.payoutBatchId
+        );
+        if (selected.length === 0) return { success: false, message: '没有可打款的已审批结算单' };
+
+        const now = new Date().toISOString().slice(0, 10);
+        const seq = String(s.payoutBatches.filter(b => b.period === period).length + 1).padStart(3, '0');
+        const batch: PayoutBatch = {
+          id: uid(),
+          batchNo: `PAY-${period}-${seq}`,
+          period,
+          partyType,
+          partyId,
+          partyName,
+          bankAccount,
+          settlementIds: selected.map(x => x.id),
+          totalAmount: Number(totalAmount.toFixed(2)),
+          status: 'pending',
+          createdAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        };
+        set(st => ({
+          payoutBatches: [batch, ...st.payoutBatches],
+          settlements: st.settlements.map(x =>
+            selected.some(s2 => s2.id === x.id)
+              ? { ...x, payoutBatchId: batch.id }
+              : x
+          ),
+        }));
+        const bills = s.bills.filter(b => getYearMonth(b.startDate) === period);
+        s.addReconHistory({
+          period,
+          action: 'batch_payout',
+          actionLabel: `生成打款批次 ${partyName}`,
+          billCount: bills.length,
+          totalAmount: batch.totalAmount,
+        });
+        return { success: true, batch };
+      },
+      markPayoutBatchPaid: (batchId) => {
+        const s = get();
+        const batch = s.payoutBatches.find(b => b.id === batchId);
+        if (!batch) return { success: false, message: '打款批次不存在' };
+        if (batch.status === 'paid') return { success: false, message: '该批次已打款' };
+        const now = new Date().toISOString().slice(0, 10);
+        set(st => ({
+          payoutBatches: st.payoutBatches.map(b =>
+            b.id === batchId ? { ...b, status: 'paid', paidAt: new Date().toISOString().slice(0, 19).replace('T', ' ') } : b
+          ),
+          settlements: st.settlements.map(x =>
+            batch.settlementIds.includes(x.id)
+              ? { ...x, status: 'paid', paidAt: now }
+              : x
+          ),
+        }));
+        return { success: true };
+      },
     }),
     {
       name: 'long-rent-billing-store',
@@ -376,6 +559,9 @@ export const useAppStore = create<AppState>()(
         bills: state.bills,
         settlements: state.settlements,
         reconHistory: state.reconHistory,
+        payoutBatches: state.payoutBatches,
+        periodLocks: state.periodLocks,
+        currentUser: state.currentUser,
       }),
     },
   ),

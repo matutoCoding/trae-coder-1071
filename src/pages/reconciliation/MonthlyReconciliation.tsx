@@ -3,21 +3,25 @@ import PageHeader from '@/components/PageHeader';
 import { useAppStore, currentPeriod } from '@/store/appStore';
 import { formatMoney, getYearMonth } from '@/utils';
 import { SettlementStatusBadge, PartyBadge } from '@/components/StatusBadge';
-import { FileCheck2, Filter, AlertCircle, RefreshCw, CheckCircle2, Send, TrendingUp, TrendingDown, Minus, RotateCcw, History, FileText, Sparkles } from 'lucide-react';
+import { FileCheck2, Filter, AlertCircle, RefreshCw, CheckCircle2, Send, TrendingUp, TrendingDown, Minus, RotateCcw, History, FileText, Sparkles, Lock, Unlock, User } from 'lucide-react';
 import type { ReconciliationResult, ReconHistoryEntry } from '@/types';
 
 export default function MonthlyReconciliation() {
-  const { bills, settlements, runMonthlyReconciliation, approveSettlement, markSettlementPaid, addReconHistory, reconHistory } = useAppStore();
+  const { bills, settlements, runMonthlyReconciliation, approveSettlement, markSettlementPaid, reconHistory, isPeriodLocked, getPeriodLock, lockPeriod, unlockPeriod, currentUser } = useAppStore();
   const [period, setPeriod] = useState(currentPeriod());
   const [partyFilter, setPartyFilter] = useState<'all' | 'platform' | 'landlord' | 'property'>('all');
   const [reconResult, setReconResult] = useState<ReconciliationResult | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [unlockReason, setUnlockReason] = useState('');
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
 
   const periodBills = bills.filter(b => getYearMonth(b.startDate) === period);
   const periodSettlements = useMemo(
     () => settlements.filter(s => s.period === period && (partyFilter === 'all' || s.partyType === partyFilter)),
     [settlements, period, partyFilter],
   );
+  const locked = isPeriodLocked(period);
+  const lockInfo = getPeriodLock(period);
 
   const stats = useMemo(() => {
     const s = periodSettlements;
@@ -43,56 +47,56 @@ export default function MonthlyReconciliation() {
   };
 
   const runRecon = (forceRegenerate = false) => {
-    const result = runMonthlyReconciliation(period, forceRegenerate);
-
-    if (forceRegenerate) {
-      addReconHistory({
-        period,
-        action: 'regenerate',
-        actionLabel: '重新生成结算',
-        billCount: periodBills.length,
-        totalAmount: totalBillAmount,
-        diffCount: result.diffs.length,
-        diffSummary: buildDiffSummary(result),
-      });
-      setReconResult({ ...result, hasDiff: false, diffs: [] });
-      alert(`已重新生成 ${result.newSettlements.length} 张结算单！`);
-    } else {
-      let action: ReconHistoryEntry['action'] = 'generate';
-      let actionLabel = '执行对账核算';
-      if (result.hasDiff) {
-        action = 'diff_detected';
-        actionLabel = '检测到金额差异';
-      } else if (result.newSettlements.length === 0 && periodSettlements.length > 0) {
-        actionLabel = '对账核算（无变化）';
-      }
-
-      addReconHistory({
-        period,
-        action,
-        actionLabel,
-        billCount: periodBills.length,
-        totalAmount: totalBillAmount,
-        diffCount: result.hasDiff ? result.diffs.length : 0,
-        diffSummary: result.hasDiff ? buildDiffSummary(result) : undefined,
-      });
-      setReconResult(result);
-
-      if (result.hasDiff) {
-        // 有差异，UI 显示差异提示
-      } else if (result.newSettlements.length === 0 && periodSettlements.length > 0) {
-        alert('该账期已完成对账，结算金额与账单一致，无变化。');
-      } else if (result.newSettlements.length === 0) {
-        alert('该账期已完成对账，无新增结算单。');
+    try {
+      const result = runMonthlyReconciliation(period, forceRegenerate);
+      if (forceRegenerate) {
+        setReconResult({ ...result, hasDiff: false, diffs: [] });
+        alert(`已重新生成 ${result.newSettlements.length} 张结算单！`);
       } else {
-        alert(`已生成 ${result.newSettlements.length} 张结算单！`);
+        setReconResult(result);
+        if (result.hasDiff) {
+          // 有差异，UI 显示差异提示
+        } else if (result.newSettlements.length === 0 && periodSettlements.length > 0) {
+          alert('该账期已完成对账，结算金额与账单一致，无变化。');
+        } else if (result.newSettlements.length === 0) {
+          alert('该账期已完成对账，无新增结算单。');
+        } else {
+          alert(`已生成 ${result.newSettlements.length} 张结算单！`);
+        }
       }
+    } catch (e: any) {
+      alert(e.message);
     }
   };
 
   const handleRegenerate = () => {
     if (confirm(`确定要重新生成 ${period} 账期的所有结算单？已审批/已打款状态将被重置。`)) {
       runRecon(true);
+    }
+  };
+
+  const handleLockToggle = () => {
+    if (locked) {
+      setShowUnlockModal(true);
+    } else {
+      if (confirm(`确定要锁定 ${period} 账期？锁定后无法修改账单、水电和结算单。`)) {
+        const r = lockPeriod(period);
+        if (!r.success) alert(r.message);
+      }
+    }
+  };
+
+  const handleUnlockConfirm = () => {
+    if (!unlockReason.trim()) {
+      alert('请填写解锁原因');
+      return;
+    }
+    const r = unlockPeriod(period, unlockReason.trim());
+    if (r.success) {
+      setShowUnlockModal(false);
+      setUnlockReason('');
+    } else {
+      alert(r.message);
     }
   };
 
@@ -103,6 +107,21 @@ export default function MonthlyReconciliation() {
         description="按月归集所有账单，一键生成平台/房东/物业三方结算单，完成审批与打款流程。"
         actions={
           <div className="flex items-center gap-2">
+            <div className="text-xs text-ink-700 mr-2 flex items-center gap-1">
+              <User size={14} />
+              <span className="font-medium">{currentUser.name}</span>
+              <span className="text-ink-600">· {currentUser.role}</span>
+            </div>
+            <button
+              onClick={handleLockToggle}
+              className={`inline-flex items-center gap-2 px-4 h-10 rounded-lg border text-sm font-medium transition ${
+                locked
+                  ? 'bg-coral-500/10 border-coral-300 text-coral-600 hover:bg-coral-500/20'
+                  : 'bg-white border-gold-300 text-ink-800 hover:bg-cream-800'
+              }`}
+            >
+              {locked ? <><Unlock size={16} /> 解锁账期</> : <><Lock size={16} /> 锁定账期</>}
+            </button>
             <button
               onClick={() => setShowHistory(!showHistory)}
               className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-white border border-gold-300 text-ink-800 font-medium text-sm hover:bg-cream-800"
@@ -112,7 +131,7 @@ export default function MonthlyReconciliation() {
             {periodSettlements.length > 0 && (
               <button
                 onClick={handleRegenerate}
-                disabled={periodBills.length === 0}
+                disabled={periodBills.length === 0 || locked}
                 className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-white border border-gold-300 text-ink-800 font-medium text-sm hover:bg-cream-800 disabled:opacity-50"
               >
                 <RotateCcw size={16} /> 重新生成结算
@@ -120,7 +139,7 @@ export default function MonthlyReconciliation() {
             )}
             <button
               onClick={() => runRecon()}
-              disabled={periodBills.length === 0}
+              disabled={periodBills.length === 0 || locked}
               className="btn-elev inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-gradient-to-br from-gold-400 to-gold-500 text-ink-900 font-semibold text-sm shadow-card disabled:opacity-50"
             >
               <RefreshCw size={16} /> 执行对账核算
@@ -162,6 +181,24 @@ export default function MonthlyReconciliation() {
           </div>
         </div>
       </PageHeader>
+
+      {locked && (
+        <div className="p-4 rounded-xl bg-coral-500/10 border border-coral-300 flex items-start gap-3">
+          <Lock size={20} className="text-coral-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold text-coral-700">{period} 账期已锁定</div>
+            <div className="text-sm text-coral-600 mt-0.5">
+              锁定于 {lockInfo?.lockedAt}，由 <b>{lockInfo?.lockedBy}</b> 操作。账单、水电、重新生成结算等影响金额的操作已被禁止。
+            </div>
+          </div>
+          <button
+            onClick={handleLockToggle}
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md bg-coral-500 text-white text-xs font-medium hover:bg-coral-600"
+          >
+            <Unlock size={14} /> 解锁
+          </button>
+        </div>
+      )}
 
       {periodBills.length === 0 ? (
         <div className="bg-white rounded-xl shadow-card border border-gold-200 p-16 text-center">
@@ -336,6 +373,7 @@ export default function MonthlyReconciliation() {
                 <thead className="bg-cream-800/60 sticky top-0">
                   <tr className="text-xs text-ink-700 uppercase tracking-wider">
                     <th className="px-5 py-2.5 text-left font-semibold">时间</th>
+                    <th className="px-5 py-2.5 text-left font-semibold">操作人</th>
                     <th className="px-5 py-2.5 text-left font-semibold">操作</th>
                     <th className="px-5 py-2.5 text-center font-semibold">账单数</th>
                     <th className="px-5 py-2.5 text-right font-semibold">账单总额</th>
@@ -347,14 +385,34 @@ export default function MonthlyReconciliation() {
                     <tr key={h.id} className="border-t border-gold-100 hover:bg-gold-100/40 transition">
                       <td className="px-5 py-3 font-mono text-xs text-ink-700">{h.timestamp}</td>
                       <td className="px-5 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-gold-400 to-gold-500 flex items-center justify-center text-ink-900 text-[10px] font-bold">
+                            {h.operator.slice(0, 1)}
+                          </div>
+                          <div>
+                            <div className="text-sm font-medium text-ink-900">{h.operator}</div>
+                            <div className="text-[11px] text-ink-700">{h.operatorRole}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-3">
                         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${
-                          h.action === 'regenerate'
+                          h.action === 'regenerate' || h.action === 'unlock'
                             ? 'bg-coral-500/15 text-coral-600'
                             : h.action === 'diff_detected'
                             ? 'bg-gold-400/30 text-ink-800'
+                            : h.action === 'lock'
+                            ? 'bg-ink-900/15 text-ink-900'
+                            : h.action === 'batch_payout'
+                            ? 'bg-ink-700/15 text-ink-800'
                             : 'bg-ink-500/15 text-ink-800'
                         }`}>
-                          {h.action === 'regenerate' ? <RotateCcw size={12} /> : h.action === 'diff_detected' ? <AlertCircle size={12} /> : <Sparkles size={12} />}
+                          {h.action === 'regenerate' ? <RotateCcw size={12} />
+                            : h.action === 'diff_detected' ? <AlertCircle size={12} />
+                            : h.action === 'lock' ? <Lock size={12} />
+                            : h.action === 'unlock' ? <Unlock size={12} />
+                            : h.action === 'batch_payout' ? <Send size={12} />
+                            : <Sparkles size={12} />}
                           {h.actionLabel}
                         </span>
                       </td>
@@ -368,6 +426,49 @@ export default function MonthlyReconciliation() {
                 </tbody>
               </table>
             )}
+          </div>
+        </div>
+      )}
+
+      {showUnlockModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setShowUnlockModal(false)}>
+          <div
+            className="bg-cream-900 rounded-2xl shadow-elevated w-full max-w-md overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-gold-200 flex items-start justify-between bg-gradient-to-br from-coral-500/90 to-coral-400 text-ink-900">
+              <div>
+                <div className="font-serif text-xl font-bold">解锁 {period} 账期</div>
+                <div className="text-sm text-ink-900/80 mt-1">解锁后可修改账单、水电和结算单</div>
+              </div>
+              <button onClick={() => setShowUnlockModal(false)} className="text-ink-900/70 hover:text-ink-900 text-2xl leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <div className="text-sm font-medium text-ink-900 mb-2">请填写解锁原因</div>
+                <textarea
+                  value={unlockReason}
+                  onChange={e => setUnlockReason(e.target.value)}
+                  placeholder="例如：调整某某房源水电数据"
+                  rows={4}
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-gold-300 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-gold-400"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowUnlockModal(false)}
+                  className="h-9 px-4 rounded-md border border-gold-300 text-ink-800 text-sm hover:bg-cream-800"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={handleUnlockConfirm}
+                  className="h-9 px-4 rounded-md bg-coral-500 text-white text-sm font-medium hover:bg-coral-600"
+                >
+                  确认解锁
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

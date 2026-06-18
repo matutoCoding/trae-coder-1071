@@ -65,8 +65,12 @@ export default function BillList() {
     const ids = list.filter(b => selectedIds.has(b.id) && b.status === 'generated').map(b => b.id);
     if (ids.length === 0) return;
     if (confirm(`确认将选中的 ${ids.length} 笔账单标记为「已确认」？`)) {
-      batchUpdateBillStatus(ids, 'confirmed');
-      setSelectedIds(new Set());
+      try {
+        batchUpdateBillStatus(ids, 'confirmed');
+        setSelectedIds(new Set());
+      } catch (e: any) {
+        alert(e.message || '操作失败');
+      }
     }
   };
 
@@ -74,8 +78,12 @@ export default function BillList() {
     const ids = list.filter(b => selectedIds.has(b.id) && b.status === 'confirmed').map(b => b.id);
     if (ids.length === 0) return;
     if (confirm(`确认将选中的 ${ids.length} 笔账单标记为「已收款」？`)) {
-      batchUpdateBillStatus(ids, 'paid');
-      setSelectedIds(new Set());
+      try {
+        batchUpdateBillStatus(ids, 'paid');
+        setSelectedIds(new Set());
+      } catch (e: any) {
+        alert(e.message || '操作失败');
+      }
     }
   };
 
@@ -83,8 +91,12 @@ export default function BillList() {
     const ids = list.filter(b => selectedIds.has(b.id)).map(b => b.id);
     if (ids.length === 0) return;
     if (confirm(`确认删除选中的 ${ids.length} 笔账单？此操作不可恢复。`)) {
-      batchDeleteBills(ids);
-      setSelectedIds(new Set());
+      try {
+        batchDeleteBills(ids);
+        setSelectedIds(new Set());
+      } catch (e: any) {
+        alert(e.message || '操作失败');
+      }
     }
   };
 

@@ -70,17 +70,21 @@ export default function BillGenerator() {
   const submit = () => {
     if (!prop) return;
     if (dateInvalid) return;
-    const bill = generateBill({
-      propertyId,
-      tenantName,
-      startDate,
-      endDate,
-      water: { previous: waterPrev, current: waterCurr, unitPrice: waterPrice },
-      electric: { previous: elecPrev, current: elecCurr, unitPrice: elecPrice },
-      commonArea,
-    });
-    alert(`账单 ${bill.billNo} 已成功生成！`);
-    nav('/bills/list');
+    try {
+      const bill = generateBill({
+        propertyId,
+        tenantName,
+        startDate,
+        endDate,
+        water: { previous: waterPrev, current: waterCurr, unitPrice: waterPrice },
+        electric: { previous: elecPrev, current: elecCurr, unitPrice: elecPrice },
+        commonArea,
+      });
+      alert(`账单 ${bill.billNo} 已成功生成！`);
+      nav('/bills/list');
+    } catch (e: any) {
+      alert(e.message || '账单生成失败');
+    }
   };
 
   useEffect(() => {

@@ -37,24 +37,28 @@ export default function Utilities() {
   }[rule];
 
   const applyToBills = () => {
-    let totalUpdated = 0;
-    billed.forEach(({ property: p, bill }) => {
-      if (!bill) return;
-      const base = rule === 'area' ? p.area : 1;
-      const wUsage = Number((waterPerUnit * base).toFixed(1));
-      const wAmount = Number((wUsage * waterUnitPrice).toFixed(2));
-      const eUsage = Number((elecPerUnit * base).toFixed(0));
-      const eAmount = Number((eUsage * elecUnitPrice).toFixed(2));
-      const cAmount = Number((commonPerUnit * base).toFixed(2));
-      const count = updateBillUtilitiesByPropertyPeriod(p.id, period,
-        { usage: wUsage, amount: wAmount, unitPrice: waterUnitPrice, previous: bill.utilities.water.previous, current: bill.utilities.water.previous + wUsage },
-        { usage: eUsage, amount: eAmount, unitPrice: elecUnitPrice, previous: bill.utilities.electric.previous, current: bill.utilities.electric.previous + eUsage },
-        cAmount,
-      );
-      totalUpdated += count;
-    });
-    setApplyResult(`已更新 ${totalUpdated} 笔账单的水电公摊金额`);
-    setTimeout(() => setApplyResult(null), 4000);
+    try {
+      let totalUpdated = 0;
+      billed.forEach(({ property: p, bill }) => {
+        if (!bill) return;
+        const base = rule === 'area' ? p.area : 1;
+        const wUsage = Number((waterPerUnit * base).toFixed(1));
+        const wAmount = Number((wUsage * waterUnitPrice).toFixed(2));
+        const eUsage = Number((elecPerUnit * base).toFixed(0));
+        const eAmount = Number((eUsage * elecUnitPrice).toFixed(2));
+        const cAmount = Number((commonPerUnit * base).toFixed(2));
+        const count = updateBillUtilitiesByPropertyPeriod(p.id, period,
+          { usage: wUsage, amount: wAmount, unitPrice: waterUnitPrice, previous: bill.utilities.water.previous, current: bill.utilities.water.previous + wUsage },
+          { usage: eUsage, amount: eAmount, unitPrice: elecUnitPrice, previous: bill.utilities.electric.previous, current: bill.utilities.electric.previous + eUsage },
+          cAmount,
+        );
+        totalUpdated += count;
+      });
+      setApplyResult(`已更新 ${totalUpdated} 笔账单的水电公摊金额`);
+      setTimeout(() => setApplyResult(null), 4000);
+    } catch (e: any) {
+      alert(e.message || '操作失败');
+    }
   };
 
   return (

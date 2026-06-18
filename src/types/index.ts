@@ -102,6 +102,7 @@ export interface Settlement {
   totalAmount: number;
   status: 'pending' | 'approved' | 'paid';
   paidAt?: string;
+  payoutBatchId?: string;
 }
 
 export interface GenerateBillParams {
@@ -112,6 +113,37 @@ export interface GenerateBillParams {
   water?: { previous: number; current: number; unitPrice: number };
   electric?: { previous: number; current: number; unitPrice: number };
   commonArea?: number;
+}
+
+export interface PayoutBatch {
+  id: string;
+  batchNo: string;
+  period: string;
+  partyType: PartyType;
+  partyId: string;
+  partyName: string;
+  bankAccount?: string;
+  settlementIds: string[];
+  totalAmount: number;
+  status: 'pending' | 'paid';
+  createdAt: string;
+  paidAt?: string;
+}
+
+export interface PeriodLock {
+  period: string;
+  locked: boolean;
+  lockedAt?: string;
+  lockedBy?: string;
+  unlockedAt?: string;
+  unlockedBy?: string;
+  unlockReason?: string;
+}
+
+export interface AppUser {
+  id: string;
+  name: string;
+  role: string;
 }
 
 export interface ReconciliationDiff {
@@ -132,7 +164,7 @@ export interface ReconciliationResult {
   hasDiff: boolean;
 }
 
-export type ReconActionType = 'generate' | 'diff_detected' | 'regenerate';
+export type ReconActionType = 'generate' | 'diff_detected' | 'regenerate' | 'lock' | 'unlock' | 'batch_payout';
 
 export interface ReconHistoryEntry {
   id: string;
@@ -140,6 +172,8 @@ export interface ReconHistoryEntry {
   action: ReconActionType;
   actionLabel: string;
   timestamp: string;
+  operator: string;
+  operatorRole: string;
   billCount: number;
   totalAmount: number;
   diffSummary?: string;
