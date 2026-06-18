@@ -3,14 +3,15 @@ import PageHeader from '@/components/PageHeader';
 import { useAppStore, currentPeriod } from '@/store/appStore';
 import { formatMoney, getYearMonth } from '@/utils';
 import { SettlementStatusBadge, PartyBadge } from '@/components/StatusBadge';
-import { FileCheck2, Filter, AlertCircle, RefreshCw, CheckCircle2, Send, TrendingUp, TrendingDown, Minus, RotateCcw } from 'lucide-react';
-import type { ReconciliationResult } from '@/types';
+import { FileCheck2, Filter, AlertCircle, RefreshCw, CheckCircle2, Send, TrendingUp, TrendingDown, Minus, RotateCcw, History, FileText, Sparkles } from 'lucide-react';
+import type { ReconciliationResult, ReconHistoryEntry } from '@/types';
 
 export default function MonthlyReconciliation() {
-  const { bills, settlements, runMonthlyReconciliation, approveSettlement, markSettlementPaid } = useAppStore();
+  const { bills, settlements, runMonthlyReconciliation, approveSettlement, markSettlementPaid, addReconHistory, reconHistory } = useAppStore();
   const [period, setPeriod] = useState(currentPeriod());
   const [partyFilter, setPartyFilter] = useState<'all' | 'platform' | 'landlord' | 'property'>('all');
   const [reconResult, setReconResult] = useState<ReconciliationResult | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   const periodBills = bills.filter(b => getYearMonth(b.startDate) === period);
   const periodSettlements = useMemo(
@@ -28,17 +29,64 @@ export default function MonthlyReconciliation() {
     };
   }, [periodSettlements]);
 
+  const periodHistory = useMemo(
+    () => reconHistory.filter(h => h.period === period),
+    [reconHistory, period],
+  );
+
+  const totalBillAmount = periodBills.reduce((s, b) => s + b.totalAmount, 0);
+
+  const buildDiffSummary = (result: ReconciliationResult): string => {
+    if (!result.hasDiff) return '无差异';
+    const totalDiff = result.diffs.reduce((s, d) => s + d.diffAmount, 0);
+    return `${result.diffs.length} 项差异，合计 ${totalDiff >= 0 ? '+' : ''}${formatMoney(totalDiff)}`;
+  };
+
   const runRecon = (forceRegenerate = false) => {
     const result = runMonthlyReconciliation(period, forceRegenerate);
-    setReconResult(result);
+
     if (forceRegenerate) {
+      addReconHistory({
+        period,
+        action: 'regenerate',
+        actionLabel: '重新生成结算',
+        billCount: periodBills.length,
+        totalAmount: totalBillAmount,
+        diffCount: result.diffs.length,
+        diffSummary: buildDiffSummary(result),
+      });
+      setReconResult({ ...result, hasDiff: false, diffs: [] });
       alert(`已重新生成 ${result.newSettlements.length} 张结算单！`);
-    } else if (result.hasDiff) {
-      // 有差异但不自动重生成
-    } else if (result.newSettlements.length === 0) {
-      alert('该账期已完成对账，无新增结算单。');
     } else {
-      alert(`已生成 ${result.newSettlements.length} 张结算单！`);
+      let action: ReconHistoryEntry['action'] = 'generate';
+      let actionLabel = '执行对账核算';
+      if (result.hasDiff) {
+        action = 'diff_detected';
+        actionLabel = '检测到金额差异';
+      } else if (result.newSettlements.length === 0 && periodSettlements.length > 0) {
+        actionLabel = '对账核算（无变化）';
+      }
+
+      addReconHistory({
+        period,
+        action,
+        actionLabel,
+        billCount: periodBills.length,
+        totalAmount: totalBillAmount,
+        diffCount: result.hasDiff ? result.diffs.length : 0,
+        diffSummary: result.hasDiff ? buildDiffSummary(result) : undefined,
+      });
+      setReconResult(result);
+
+      if (result.hasDiff) {
+        // 有差异，UI 显示差异提示
+      } else if (result.newSettlements.length === 0 && periodSettlements.length > 0) {
+        alert('该账期已完成对账，结算金额与账单一致，无变化。');
+      } else if (result.newSettlements.length === 0) {
+        alert('该账期已完成对账，无新增结算单。');
+      } else {
+        alert(`已生成 ${result.newSettlements.length} 张结算单！`);
+      }
     }
   };
 
@@ -55,6 +103,12 @@ export default function MonthlyReconciliation() {
         description="按月归集所有账单，一键生成平台/房东/物业三方结算单，完成审批与打款流程。"
         actions={
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="inline-flex items-center gap-2 px-4 h-10 rounded-lg bg-white border border-gold-300 text-ink-800 font-medium text-sm hover:bg-cream-800"
+            >
+              <History size={16} /> 对账历史
+            </button>
             {periodSettlements.length > 0 && (
               <button
                 onClick={handleRegenerate}
@@ -254,6 +308,68 @@ export default function MonthlyReconciliation() {
             </div>
           </div>
         </>
+      )}
+
+      {showHistory && (
+        <div className="bg-white rounded-xl shadow-card border border-gold-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-gold-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <History size={18} className="text-ink-600" />
+              <div className="font-serif text-base font-semibold text-ink-900">对账历史记录</div>
+              <div className="text-xs text-ink-700">{period} 账期 · 共 {periodHistory.length} 条</div>
+            </div>
+            <button
+              onClick={() => setShowHistory(false)}
+              className="text-xs text-ink-700 hover:text-ink-900"
+            >
+              收起
+            </button>
+          </div>
+          <div className="max-h-80 overflow-y-auto">
+            {periodHistory.length === 0 ? (
+              <div className="px-5 py-12 text-center text-ink-700 text-sm">
+                <FileText size={32} className="mx-auto mb-2 opacity-50" />
+                暂无对账历史记录
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-cream-800/60 sticky top-0">
+                  <tr className="text-xs text-ink-700 uppercase tracking-wider">
+                    <th className="px-5 py-2.5 text-left font-semibold">时间</th>
+                    <th className="px-5 py-2.5 text-left font-semibold">操作</th>
+                    <th className="px-5 py-2.5 text-center font-semibold">账单数</th>
+                    <th className="px-5 py-2.5 text-right font-semibold">账单总额</th>
+                    <th className="px-5 py-2.5 text-left font-semibold">差额摘要</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {periodHistory.map(h => (
+                    <tr key={h.id} className="border-t border-gold-100 hover:bg-gold-100/40 transition">
+                      <td className="px-5 py-3 font-mono text-xs text-ink-700">{h.timestamp}</td>
+                      <td className="px-5 py-3">
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${
+                          h.action === 'regenerate'
+                            ? 'bg-coral-500/15 text-coral-600'
+                            : h.action === 'diff_detected'
+                            ? 'bg-gold-400/30 text-ink-800'
+                            : 'bg-ink-500/15 text-ink-800'
+                        }`}>
+                          {h.action === 'regenerate' ? <RotateCcw size={12} /> : h.action === 'diff_detected' ? <AlertCircle size={12} /> : <Sparkles size={12} />}
+                          {h.actionLabel}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-center font-semibold">{h.billCount} 笔</td>
+                      <td className="px-5 py-3 text-right font-serif font-bold text-ink-900">{formatMoney(h.totalAmount)}</td>
+                      <td className="px-5 py-3 text-sm text-ink-700">
+                        {h.diffSummary || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

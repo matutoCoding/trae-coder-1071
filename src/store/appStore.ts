@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
   SeasonTier, Landlord, SplitRule, Property, Bill, Settlement, GenerateBillParams, PartyType,
-  ReconciliationResult,
+  ReconciliationResult, ReconHistoryEntry,
 } from '@/types';
 import {
   defaultSeasonTiers, defaultLandlords, defaultSplitRules, defaultProperties,
@@ -19,6 +19,7 @@ interface AppState {
   properties: Property[];
   bills: Bill[];
   settlements: Settlement[];
+  reconHistory: ReconHistoryEntry[];
 
   upsertSeasonTier: (t: SeasonTier) => void;
   deleteSeasonTier: (id: string) => void;
@@ -41,6 +42,9 @@ interface AppState {
   approveSettlement: (id: string) => void;
   markSettlementPaid: (id: string) => void;
   deleteSettlementByPeriod: (period: string) => void;
+  batchApproveSettlements: (ids: string[]) => void;
+  batchMarkSettlementsPaid: (ids: string[]) => void;
+  addReconHistory: (entry: Omit<ReconHistoryEntry, 'id' | 'timestamp'>) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -52,6 +56,7 @@ export const useAppStore = create<AppState>()(
       properties: defaultProperties,
       bills: initialBills,
       settlements: initialSettlements,
+      reconHistory: [],
 
       upsertSeasonTier: (t) => set(s => {
         const i = s.seasonTiers.findIndex(x => x.id === t.id);
@@ -341,6 +346,25 @@ export const useAppStore = create<AppState>()(
           ? { ...x, status: 'paid', paidAt: new Date().toISOString().slice(0, 10) }
           : x),
       })),
+      batchApproveSettlements: (ids) => set(s => ({
+        settlements: s.settlements.map(x => ids.includes(x.id) ? { ...x, status: 'approved' } : x),
+      })),
+      batchMarkSettlementsPaid: (ids) => set(s => ({
+        settlements: s.settlements.map(x => ids.includes(x.id)
+          ? { ...x, status: 'paid', paidAt: new Date().toISOString().slice(0, 10) }
+          : x),
+      })),
+
+      addReconHistory: (entry) => set(s => ({
+        reconHistory: [
+          {
+            ...entry,
+            id: uid(),
+            timestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
+          },
+          ...s.reconHistory,
+        ].slice(0, 100),
+      })),
     }),
     {
       name: 'long-rent-billing-store',
@@ -351,6 +375,7 @@ export const useAppStore = create<AppState>()(
         properties: state.properties,
         bills: state.bills,
         settlements: state.settlements,
+        reconHistory: state.reconHistory,
       }),
     },
   ),

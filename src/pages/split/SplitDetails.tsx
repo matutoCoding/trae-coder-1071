@@ -3,12 +3,12 @@ import PageHeader from '@/components/PageHeader';
 import { useAppStore, currentPeriod } from '@/store/appStore';
 import { formatMoney, getYearMonth } from '@/utils';
 import DonutChart from '@/components/DonutChart';
-import { PartyBadge } from '@/components/StatusBadge';
-import { FileSpreadsheet, Filter, ChevronDown, ChevronUp, Eye } from 'lucide-react';
-import type { Bill } from '@/types';
+import { PartyBadge, BillStatusBadge, SettlementStatusBadge } from '@/components/StatusBadge';
+import { FileSpreadsheet, Filter, ChevronDown, ChevronUp, Eye, Droplets, Zap, Building2, FileText, Wallet } from 'lucide-react';
+import type { Bill, Settlement } from '@/types';
 
 export default function SplitDetails() {
-  const { bills, landlords } = useAppStore();
+  const { bills, landlords, settlements, properties } = useAppStore();
   const [period, setPeriod] = useState(currentPeriod());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [viewBill, setViewBill] = useState<Bill | null>(null);
@@ -17,6 +17,19 @@ export default function SplitDetails() {
     () => bills.filter(b => getYearMonth(b.startDate) === period),
     [bills, period],
   );
+
+  const periodSettlements = useMemo(
+    () => settlements.filter(s => s.period === period),
+    [settlements, period],
+  );
+
+  const findSettlementForBill = (b: Bill): Settlement | undefined => {
+    const prop = properties.find(p => p.id === b.propertyId);
+    if (!prop) return undefined;
+    const ld = landlords.find(l => l.id === prop.landlordId);
+    const partyId = ld ? ld.id : '';
+    return periodSettlements.find(s => s.partyType === 'landlord' && s.partyId === partyId);
+  };
 
   const agg = useMemo(() => {
     let platform = 0, property = 0, landlord = 0, baseRent = 0, utilities = 0, total = 0;
@@ -28,7 +41,7 @@ export default function SplitDetails() {
       baseRent += b.baseRent;
       utilities += (b.totalAmount - b.baseRent);
       total += b.totalAmount;
-      const prop = useAppStore.getState().properties.find(p => p.id === b.propertyId);
+      const prop = properties.find(p => p.id === b.propertyId);
       if (prop) {
         const l = landlords.find(x => x.id === prop.landlordId);
         if (l) {
@@ -169,24 +182,132 @@ export default function SplitDetails() {
       {viewBill && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setViewBill(null)}>
           <div
-            className="bg-cream-900 rounded-2xl shadow-elevated w-full max-w-xl overflow-hidden"
+            className="bg-cream-900 rounded-2xl shadow-elevated w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col"
             onClick={e => e.stopPropagation()}
           >
-            <div className="p-5 border-b border-gold-200 flex items-start justify-between bg-gradient-to-br from-ink-900 to-ink-800 text-cream-900">
+            <div className="p-5 border-b border-gold-200 flex items-start justify-between bg-gradient-to-br from-ink-900 to-ink-800 text-cream-900 flex-shrink-0">
               <div>
-                <div className="text-xs font-mono text-gold-300">{viewBill.billNo}</div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-mono text-gold-300">{viewBill.billNo}</span>
+                  <BillStatusBadge status={viewBill.status} />
+                </div>
                 <div className="font-serif text-xl font-bold mt-1">{viewBill.propertyName}</div>
-                <div className="text-xs text-cream-700 mt-1">{viewBill.tenantName} · {viewBill.startDate} ~ {viewBill.endDate}</div>
+                <div className="text-xs text-cream-700 mt-1">{viewBill.tenantName} · {viewBill.startDate} ~ {viewBill.endDate} · 共 {viewBill.totalDays} 天</div>
               </div>
               <button onClick={() => setViewBill(null)} className="text-cream-700 hover:text-cream-900 text-2xl leading-none">×</button>
             </div>
-            <div className="p-5 space-y-3 text-sm">
-              <SplitRow label="应收总额" value={viewBill.totalAmount} bold />
-              <div className="pt-2 mt-2 border-t border-gold-200">
+            <div className="p-5 space-y-5 text-sm overflow-y-auto flex-1">
+              <div>
+                <div className="text-xs font-semibold text-ink-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <FileText size={14} /> 基础租金（分档计费）
+                </div>
+                <div className="space-y-1.5 bg-white rounded-lg p-3 border border-gold-200">
+                  {viewBill.segments.map((seg, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: seg.tierColor }} />
+                        <span className="text-ink-800">{seg.tierName}</span>
+                        <span className="text-xs text-ink-700">{seg.startDate.slice(5)} ~ {seg.endDate.slice(5)} · {seg.days} 天</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-ink-700 text-xs">¥{seg.unitPrice}/天</span>
+                        <span className="ml-2 font-semibold text-ink-900">{formatMoney(seg.amount)}</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="pt-2 mt-2 border-t border-gold-200 flex items-center justify-between">
+                    <span className="font-medium text-ink-800">基础租金合计</span>
+                    <span className="font-serif font-bold text-ink-900">{formatMoney(viewBill.baseRent)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold text-ink-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Droplets size={14} /> 水费
+                </div>
+                <div className="bg-white rounded-lg p-3 border border-gold-200 grid grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs text-ink-700">上次读数</div>
+                    <div className="font-medium text-ink-900">{viewBill.utilities.water.previous} 吨</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-ink-700">本次读数</div>
+                    <div className="font-medium text-ink-900">{viewBill.utilities.water.current} 吨</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-ink-700">用量 / 单价</div>
+                    <div className="font-medium text-ink-900">{viewBill.utilities.water.usage} 吨 · ¥{viewBill.utilities.water.unitPrice}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold text-ink-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Zap size={14} /> 电费
+                </div>
+                <div className="bg-white rounded-lg p-3 border border-gold-200 grid grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs text-ink-700">上次读数</div>
+                    <div className="font-medium text-ink-900">{viewBill.utilities.electric.previous} 度</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-ink-700">本次读数</div>
+                    <div className="font-medium text-ink-900">{viewBill.utilities.electric.current} 度</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-ink-700">用量 / 单价</div>
+                    <div className="font-medium text-ink-900">{viewBill.utilities.electric.usage} 度 · ¥{viewBill.utilities.electric.unitPrice}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold text-ink-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Building2 size={14} /> 公摊费用
+                </div>
+                <div className="bg-white rounded-lg p-3 border border-gold-200 flex items-center justify-between text-sm">
+                  <span className="text-ink-700">公摊费用（按房源面积分摊）</span>
+                  <span className="font-medium text-ink-900">{formatMoney(viewBill.utilities.commonArea)}</span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-gold-200">
+                <div className="flex items-center justify-between text-base">
+                  <span className="font-semibold text-ink-900">应收总额</span>
+                  <span className="font-serif font-bold text-2xl gold-text">{formatMoney(viewBill.totalAmount)}</span>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-gold-200">
                 <div className="text-xs font-semibold text-ink-700 uppercase tracking-wide mb-2">分账结果</div>
-                <SplitRow label="运营平台" value={viewBill.splitResult.platformAmount} />
-                <SplitRow label="物业服务" value={viewBill.splitResult.propertyFeeAmount} />
-                <SplitRow label="房东结算" value={viewBill.splitResult.landlordAmount} highlight sub={`含水电代收 ${formatMoney(viewBill.splitResult.utilitiesPassThrough)}`} />
+                <div className="space-y-1.5">
+                  <SplitRow label="运营平台抽成" value={viewBill.splitResult.platformAmount} />
+                  <SplitRow label="物业服务费" value={viewBill.splitResult.propertyFeeAmount} />
+                  <SplitRow label="房东应结" value={viewBill.splitResult.landlordAmount} highlight sub={`含水电代收 ${formatMoney(viewBill.splitResult.utilitiesPassThrough)}`} />
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-gold-200">
+                <div className="text-xs font-semibold text-ink-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Wallet size={14} /> 关联结算单
+                </div>
+                {findSettlementForBill(viewBill) ? (
+                  <div className="bg-gradient-to-r from-gold-400/20 to-gold-300/20 rounded-lg p-3 border border-gold-300 flex items-center justify-between">
+                    <div>
+                      <div className="font-mono text-xs text-ink-700">{findSettlementForBill(viewBill)?.settlementNo}</div>
+                      <div className="text-sm font-medium text-ink-900 mt-0.5">{findSettlementForBill(viewBill)?.partyName}</div>
+                    </div>
+                    <div className="text-right">
+                      <SettlementStatusBadge status={findSettlementForBill(viewBill)!.status} />
+                      <div className="text-xs text-ink-700 mt-1">房东应结 {formatMoney(findSettlementForBill(viewBill)!.totalAmount)}</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-ink-700 bg-cream-800/40 rounded-lg p-3 border border-dashed border-gold-300 text-center">
+                    该账期尚未生成结算单，请前往「月度对账」执行核算
+                  </div>
+                )}
               </div>
             </div>
           </div>

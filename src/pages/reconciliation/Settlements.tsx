@@ -3,13 +3,14 @@ import PageHeader from '@/components/PageHeader';
 import { useAppStore } from '@/store/appStore';
 import { formatMoney } from '@/utils';
 import { SettlementStatusBadge, PartyBadge } from '@/components/StatusBadge';
-import { Wallet, Search, FileDown, ChevronDown, ChevronUp } from 'lucide-react';
+import { Wallet, Search, FileDown, ChevronDown, ChevronUp, CheckSquare, Square, CheckCircle2, Send } from 'lucide-react';
 
 export default function Settlements() {
-  const { settlements, approveSettlement, markSettlementPaid } = useAppStore();
+  const { settlements, approveSettlement, markSettlementPaid, batchApproveSettlements, batchMarkSettlementsPaid } = useAppStore();
   const [q, setQ] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'paid'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const { bills, properties, landlords } = useAppStore();
 
   const list = useMemo(() => {
@@ -24,6 +25,52 @@ export default function Settlements() {
     approved: list.filter(s => s.status === 'approved').reduce((a, x) => a + x.totalAmount, 0),
     paid: list.filter(s => s.status === 'paid').reduce((a, x) => a + x.totalAmount, 0),
   }), [list]);
+
+  const allSelected = list.length > 0 && list.every(s => selectedIds.has(s.id));
+  const someSelected = list.some(s => selectedIds.has(s.id));
+
+  const batchStats = useMemo(() => {
+    const selected = list.filter(s => selectedIds.has(s.id));
+    return {
+      count: selected.length,
+      amount: selected.reduce((s, x) => s + x.totalAmount, 0),
+      canApprove: selected.some(s => s.status === 'pending'),
+      canMarkPaid: selected.some(s => s.status === 'approved'),
+    };
+  }, [selectedIds, list]);
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(list.map(s => s.id)));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedIds(next);
+  };
+
+  const handleBatchApprove = () => {
+    const ids = list.filter(s => selectedIds.has(s.id) && s.status === 'pending').map(s => s.id);
+    if (ids.length === 0) return;
+    if (confirm(`确认审批通过选中的 ${ids.length} 张结算单？`)) {
+      batchApproveSettlements(ids);
+      setSelectedIds(new Set());
+    }
+  };
+
+  const handleBatchMarkPaid = () => {
+    const ids = list.filter(s => selectedIds.has(s.id) && s.status === 'approved').map(s => s.id);
+    if (ids.length === 0) return;
+    if (confirm(`确认将选中的 ${ids.length} 张结算单标记为已打款？`)) {
+      batchMarkSettlementsPaid(ids);
+      setSelectedIds(new Set());
+    }
+  };
 
   const relatedBills = (s: any) => {
     return bills.filter(b => {
@@ -82,11 +129,50 @@ export default function Settlements() {
         <SettleSummaryCard label="已完成打款" value={formatMoney(totals.paid)} count={list.filter(s => s.status === 'paid').length} color="ink" />
       </div>
 
+      {someSelected && (
+        <div className="p-4 rounded-xl bg-gradient-to-r from-ink-900 to-ink-800 text-cream-900 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <CheckSquare size={18} className="text-gold-400" />
+            <span className="text-sm">已选择 <b className="text-gold-400">{batchStats.count}</b> 张结算单</span>
+            <span className="text-xs text-cream-700">合计金额 {formatMoney(batchStats.amount)}</span>
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            {batchStats.canApprove && (
+              <button
+                onClick={handleBatchApprove}
+                className="h-9 px-4 rounded-md bg-gold-400/40 text-ink-900 hover:bg-gold-400/60 inline-flex items-center gap-1.5 text-xs font-semibold"
+              >
+                <CheckCircle2 size={14} /> 批量审批
+              </button>
+            )}
+            {batchStats.canMarkPaid && (
+              <button
+                onClick={handleBatchMarkPaid}
+                className="h-9 px-4 rounded-md bg-ink-500/40 text-cream-900 hover:bg-ink-500/60 inline-flex items-center gap-1.5 text-xs font-medium"
+              >
+                <Send size={14} /> 批量标记打款
+              </button>
+            )}
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="h-9 px-3 rounded-md bg-ink-700/40 text-cream-700 hover:bg-ink-700/60 text-xs"
+            >
+              取消选择
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl shadow-card border border-gold-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full table-zebra text-sm">
             <thead>
               <tr className="bg-cream-800/60 text-ink-700 text-xs uppercase tracking-wider">
+                <th className="px-2 py-3 text-center w-10">
+                  <button onClick={toggleSelectAll} className="text-ink-800 hover:text-ink-900">
+                    {allSelected ? <CheckSquare size={16} className="text-ink-900" /> : <Square size={16} />}
+                  </button>
+                </th>
                 <th className="px-5 py-3"></th>
                 <th className="px-5 py-3 text-left font-semibold">结算单号</th>
                 <th className="px-5 py-3 text-left font-semibold">账期</th>
@@ -102,6 +188,11 @@ export default function Settlements() {
               {list.map(s => (
                 <>
                   <tr key={s.id} className="border-t border-gold-100 hover:bg-gold-100/40 transition">
+                    <td className="px-2 py-3 text-center">
+                      <button onClick={() => toggleSelect(s.id)} className="text-ink-800 hover:text-ink-900">
+                        {selectedIds.has(s.id) ? <CheckSquare size={16} className="text-ink-900" /> : <Square size={16} />}
+                      </button>
+                    </td>
                     <td className="px-2 py-3">
                       <button
                         onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
@@ -144,7 +235,7 @@ export default function Settlements() {
                   </tr>
                   {expandedId === s.id && (
                     <tr key={`${s.id}-expand`} className="bg-cream-800/40">
-                      <td colSpan={9} className="px-8 py-4">
+                      <td colSpan={10} className="px-8 py-4">
                         <div className="text-xs font-semibold text-ink-700 uppercase tracking-wide mb-2">关联账单明细（前 5 笔）</div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                           {relatedBills(s).map(b => (
@@ -173,7 +264,7 @@ export default function Settlements() {
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-5 py-16 text-center text-ink-700 text-sm">
+                  <td colSpan={10} className="px-5 py-16 text-center text-ink-700 text-sm">
                     <Wallet size={36} className="mx-auto mb-3 opacity-50 text-ink-600" />
                     暂无结算单数据
                   </td>

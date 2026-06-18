@@ -131,3 +131,17 @@ export interface ReconciliationResult {
   diffs: ReconciliationDiff[];
   hasDiff: boolean;
 }
+
+export type ReconActionType = 'generate' | 'diff_detected' | 'regenerate';
+
+export interface ReconHistoryEntry {
+  id: string;
+  period: string;
+  action: ReconActionType;
+  actionLabel: string;
+  timestamp: string;
+  billCount: number;
+  totalAmount: number;
+  diffSummary?: string;
+  diffCount?: number;
+}
